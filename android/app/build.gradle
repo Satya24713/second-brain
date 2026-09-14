@@ -1,0 +1,25 @@
+plugins { id 'com.android.application' }
+def signing = new Properties()
+def signingFile = file('../../.android-signing/signing.properties')
+if (signingFile.exists()) signingFile.withInputStream { signing.load(it) }
+android {
+  namespace 'dev.satya.secondbrain'
+  compileSdk 36
+  defaultConfig {
+    applicationId 'dev.satya.secondbrain'
+    minSdk 24
+    targetSdk 36
+    versionCode 1
+    versionName '1.0.0'
+  }
+  signingConfigs {
+    release {
+      storeFile file('../../.android-signing/second-brain.jks')
+      storePassword signing.getProperty('password')
+      keyAlias 'second-brain'
+      keyPassword signing.getProperty('password')
+    }
+  }
+  buildTypes { release { signingConfig signingConfigs.release; minifyEnabled false } }
+}
+dependencies { implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.7.3' }

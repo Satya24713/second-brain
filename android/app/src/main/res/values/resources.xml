@@ -1,0 +1,11 @@
+<resources>
+  <color name="canvas">#FCFCFD</color>
+  <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+    <item name="android:fontFamily">sans</item>
+    <item name="android:windowLightStatusBar">true</item>
+    <item name="android:statusBarColor">@color/canvas</item>
+    <item name="android:windowBackground">@color/canvas</item>
+    <item name="android:colorAccent">#294CDD</item>
+  </style>
+  <string name="asset_statements">[{\"relation\":[\"delegate_permission/common.handle_all_urls\"],\"target\":{\"namespace\":\"web\",\"site\":\"https://second-brain-satya-2026.satya24713.chatgpt.site\"}}]</string>
+</resources>

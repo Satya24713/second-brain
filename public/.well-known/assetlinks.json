@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "dev.satya.secondbrain",
+      "sha256_cert_fingerprints": [
+        "45:E4:3B:62:5B:47:B4:55:D7:17:6F:C2:6D:28:FC:9F:7D:48:80:DF:10:CD:1B:DE:F0:0A:18:C7:84:0C:90:03"
+      ]
+    }
+  }
+]
