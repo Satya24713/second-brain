@@ -4,7 +4,7 @@ export type Task = {
   notes: string;
   tag: string;
   kind: "task" | "event";
-  priority: "normal" | "high";
+  priority: "normal" | "high" | "low";
   due_at: string | null;
   done: number;
   completed_at: string | null;
@@ -37,7 +37,7 @@ export type Action = {
   notes?: string;
   tag?: string;
   kind?: "task" | "event";
-  priority?: "normal" | "high";
+  priority?: "normal" | "high" | "low";
   due_at?: string | null;
   body?: string;
   summary?: string;

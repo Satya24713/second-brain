@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./task-workspace.css";
 
 export const metadata: Metadata = {
   title: "Second Brain — A little more headspace",

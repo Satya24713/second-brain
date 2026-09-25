@@ -56,3 +56,8 @@ next-env.d.ts
 /android/build/
 *.apk
 *.aab
+
+# Generated Android web bundle and local device screenshots
+/android/app/src/main/assets/www/
+/device_*.png
+/test_device_*.png

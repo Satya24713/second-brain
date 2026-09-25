@@ -44,7 +44,7 @@
   --card-foreground: #252832;
   --popover: #fff;
   --popover-foreground: #252832;
-  --primary: #294cdd;
+  --primary: #2563eb;
   --primary-foreground: #fff;
   --secondary: #f4f5f7;
   --secondary-foreground: #3c4351;
@@ -57,9 +57,9 @@
   --input: #dce0e7;
   --ring: #294cdd;
   --radius: 0.75rem;
-  --canvas: #fcfcfd;
+  --canvas: #ffffff;
   --sidebar: #f7f8fa;
-  --blue-soft: #eff2ff;
+  --blue-soft: #eff4fe;
   --font-sans: Inter, Arial, sans-serif;
   --font-display: "Instrument Serif", Georgia, serif;
 }

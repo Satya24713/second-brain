@@ -11,7 +11,7 @@ export const taskSchema = z
     notes: text(5000).default(""),
     tag: text(60).default(""),
     kind: z.enum(["task", "event"]).default("task"),
-    priority: z.enum(["normal", "high"]).default("normal"),
+    priority: z.enum(["normal", "high", "low"]).default("normal"),
     due_at: dueSchema.default(null),
   })
   .strict();

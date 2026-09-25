@@ -132,10 +132,11 @@ export function TaskEditor({
             Priority
             <select
               value={priority}
-              onChange={(e) => setPriority(e.target.value as "normal" | "high")}
+              onChange={(e) => setPriority(e.target.value as Task["priority"])}
             >
-              <option value="normal">Normal</option>
-              <option value="high">Important</option>
+              <option value="high">Urgent · Red</option>
+              <option value="normal">Medium · Orange</option>
+              <option value="low">Low · Green</option>
             </select>
           </label>
         </div>

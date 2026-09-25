@@ -18,17 +18,18 @@ import {
   Hash,
   LoaderCircle,
   RefreshCw,
+  RotateCcw,
   Link2,
   X,
-  Clock,
   SlidersHorizontal,
-  Flag,
   LogOut,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
-import { api } from "@/lib/client";
-import { dayKey, formatDue, daysAway } from "@/lib/dates";
-import type { AppData, Task, Journal } from "@/lib/types";
+import { api, streamAssistant } from "@/lib/client";
+import { dayKey, formatDue } from "@/lib/dates";
+import type { AppData, Task, Journal, Message } from "@/lib/types";
+import { UpcomingCalendar } from "./product/upcoming-calendar";
+import { priorityRank, tagColors } from "@/lib/task-display";
 import { TaskEditor } from "./product/task-editor";
 import { TaskRow } from "./product/task-row";
 import { JournalEditor } from "./product/journal-editor";
@@ -62,7 +63,14 @@ export default function Workspace() {
   const [aiHidden, setAiHidden] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
+  const [pendingChat, setPendingChat] = useState<Message[]>([]);
+  const aiRequest = useRef(false);
+  const followChat = useRef(true);
+  const chatScroll = useRef<HTMLDivElement>(null);
+  const [calendarDate, setCalendarDate] = useState("");
   const [aiError, setAiError] = useState("");
+  const [clearingAi, setClearingAi] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [journalDraft, setJournalDraft] = useState("");
   const [journalBusy, setJournalBusy] = useState(false);
@@ -91,7 +99,7 @@ export default function Workspace() {
     }
   }, []);
   useEffect(() => {
-    load();
+    void Promise.resolve().then(load);
     const timer = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(timer);
   }, [load]);
@@ -117,8 +125,9 @@ export default function Workspace() {
     return () => window.removeEventListener("keydown", fn);
   }, []);
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [data?.messages.length, aiBusy]);
+    if (followChat.current && chatScroll.current)
+      chatScroll.current.scrollTop = chatScroll.current.scrollHeight;
+  }, [data?.messages.length, pendingChat, aiBusy, aiOpen]);
   const tz = data?.profile.timezone || "Asia/Kolkata";
   const today = dayKey(now, tz);
   const tasks = data?.tasks || [];
@@ -132,13 +141,6 @@ export default function Workspace() {
   const todayTasks = tasks.filter(
     (t) => t.due_at && dayKey(t.due_at, tz) === today,
   );
-  const overdue = tasks.filter(
-    (t) => !t.done && t.due_at && dayKey(t.due_at, tz) < today,
-  );
-  const future = tasks
-    .filter((t) => !t.done && t.due_at && dayKey(t.due_at, tz) > today)
-    .sort((a, b) => a.due_at!.localeCompare(b.due_at!));
-  const upcomingEvents = future.filter((t) => t.kind === "event").slice(0, 3);
   const completed = todayTasks.filter((t) => t.done).length;
   const pending = todayTasks.filter((t) => !t.done).length;
   const selected = tasks.filter(
@@ -159,24 +161,30 @@ export default function Workspace() {
     )
     .sort((a, b) =>
       sort === "priority"
-        ? a.priority === b.priority
-          ? 0
-          : a.priority === "high"
-            ? -1
-            : 1
+        ? priorityRank(a.priority) - priorityRank(b.priority)
         : sort === "newest"
           ? b.created_at.localeCompare(a.created_at)
           : (a.due_at || "z").localeCompare(b.due_at || "z"),
     );
-  const groups = useMemo(() => {
+  const visibleTasks =
+    view === "upcoming" && calendarDate
+      ? filtered.filter(
+          (task) => task.due_at && dayKey(task.due_at, tz) === calendarDate,
+        )
+      : filtered;
+  const progress = todayTasks.length
+    ? Math.round((completed / todayTasks.length) * 100)
+    : 0;
+  const chatMessages = [...(data?.messages || []), ...pendingChat];
+  const groups = (() => {
     const map = new Map<string, Task[]>();
-    for (const task of filtered) {
+    for (const task of visibleTasks) {
       const date = task.due_at ? dayKey(task.due_at, tz) : "";
       const key =
         view === "today"
           ? date < today
-            ? "Needs a new plan"
-            : "On your list"
+            ? "Overdue"
+            : "Today"
           : view === "upcoming"
             ? task.due_at
               ? new Intl.DateTimeFormat("en", {
@@ -190,7 +198,7 @@ export default function Workspace() {
       map.set(key, [...(map.get(key) || []), task]);
     }
     return Array.from(map);
-  }, [filtered, tz, today, view]);
+  })();
   async function saved(message: string) {
     await load();
     toast.success(message);
@@ -226,6 +234,7 @@ export default function Workspace() {
   }
   function changeView(v: View) {
     setView(v);
+    setCalendarDate("");
     setTag("");
     setQuery("");
     setStatus("active");
@@ -236,18 +245,88 @@ export default function Workspace() {
     setAiHidden(false);
     setTimeout(() => promptRef.current?.focus(), 50);
   }
-  async function sendPrompt(e?: React.FormEvent) {
-    e?.preventDefault();
-    if (!prompt.trim() || aiBusy) return;
-    setAiBusy(true);
+  const clearChat = useCallback(async () => {
+    if (clearingAi || aiBusy) return;
+    setClearingAi(true);
     setAiError("");
     try {
-      await api("assistant", "POST", { message: prompt });
+      await api("assistant", "DELETE");
+      setData((d) => (d ? { ...d, messages: [] } : d));
+      setConfirmClear(false);
+      setPendingChat([]);
+      toast.success("Chat context cleared. Starting fresh.");
+    } catch (e) {
+      const msg = (e as Error).message || "Could not clear chat context.";
+      setAiError(msg);
+      toast.error(msg);
+    } finally {
+      setClearingAi(false);
+    }
+  }, [clearingAi, aiBusy]);
+
+  async function sendPrompt(e?: React.FormEvent) {
+    e?.preventDefault();
+    const trimmed = prompt.trim();
+    if (!trimmed || aiRequest.current || clearingAi || !data?.aiConfigured)
+      return;
+
+    if (
+      trimmed.toLowerCase() === "/clear" ||
+      trimmed.toLowerCase() === "clear"
+    ) {
       setPrompt("");
-      await load();
+      await clearChat();
+      return;
+    }
+
+    aiRequest.current = true;
+    setAiBusy(true);
+    setAiError("");
+    setPrompt("");
+    followChat.current = true;
+    const sentAt = new Date().toISOString();
+    const optimisticUser: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: trimmed,
+      proposal: null,
+      applied: 0,
+      created_at: sentAt,
+    };
+    const optimisticReply: Message = {
+      ...optimisticUser,
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content: "",
+    };
+    setPendingChat([optimisticUser, optimisticReply]);
+    try {
+      const result = await streamAssistant(trimmed, (content) => {
+        setPendingChat([optimisticUser, { ...optimisticReply, content }]);
+      });
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              messages: [
+                ...current.messages,
+                { ...optimisticUser, id: result.userId || optimisticUser.id },
+                {
+                  ...optimisticReply,
+                  id: result.id,
+                  content: result.reply,
+                  proposal: result.actions || result.proposal || [],
+                },
+              ],
+            }
+          : current,
+      );
+      setPendingChat([]);
     } catch (e) {
       setAiError((e as Error).message);
+      setPrompt((draft) => draft || trimmed);
     } finally {
+      aiRequest.current = false;
       setAiBusy(false);
     }
   }
@@ -323,23 +402,92 @@ export default function Workspace() {
         <span className="assistant-icon">
           <Sparkles size={17} />
         </span>
-        <div>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <strong>Your second brain</strong>
           <span>A little help, when you need it</span>
         </div>
-        <button
-          className="icon-button"
-          aria-label="Close assistant"
-          onClick={() => {
-            setAiOpen(false);
-            setAiHidden(true);
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            marginLeft: "auto",
           }}
         >
-          <PanelRightClose size={18} />
-        </button>
+          {!!data?.messages?.length && (
+            <button
+              className="icon-button"
+              type="button"
+              aria-label={
+                confirmClear
+                  ? "Click again to confirm clearing chat context"
+                  : "Clear chat context and start fresh"
+              }
+              title={
+                confirmClear
+                  ? "Click again to confirm"
+                  : "Clear chat context and restart fresh"
+              }
+              disabled={aiBusy || clearingAi}
+              onClick={() => {
+                if (confirmClear) {
+                  void clearChat();
+                } else {
+                  setConfirmClear(true);
+                  setTimeout(() => setConfirmClear(false), 3500);
+                }
+              }}
+              style={{
+                width: "auto",
+                height: "30px",
+                padding: "0 9px",
+                borderRadius: "8px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "5px",
+                fontSize: "0.75rem",
+                fontWeight: 500,
+                color: confirmClear ? "#dc2626" : "#475569",
+                background: confirmClear ? "#fef2f2" : "#f8fafc",
+                border: confirmClear
+                  ? "1px solid #fecaca"
+                  : "1px solid #e2e8f0",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <RotateCcw size={12} className={clearingAi ? "spin" : ""} />
+              <span>
+                {clearingAi
+                  ? "Clearing…"
+                  : confirmClear
+                    ? "Confirm clear?"
+                    : "Clear"}
+              </span>
+            </button>
+          )}
+          <button
+            className="icon-button"
+            aria-label="Close assistant"
+            onClick={() => {
+              setAiOpen(false);
+              setAiHidden(true);
+            }}
+          >
+            <PanelRightClose size={18} />
+          </button>
+        </div>
       </div>
-      <div className="assistant-content">
-        {!data?.messages.length ? (
+      <div
+        className="assistant-content"
+        ref={chatScroll}
+        onScroll={(e) => {
+          const node = e.currentTarget;
+          followChat.current =
+            node.scrollHeight - node.scrollTop - node.clientHeight < 90;
+        }}
+      >
+        {!chatMessages.length ? (
           <div className="assistant-intro">
             <span className="sparkle-well">
               <Sparkles size={27} strokeWidth={1.3} />
@@ -386,12 +534,20 @@ export default function Workspace() {
           </div>
         ) : (
           <div className="messages">
-            {data.messages.map((m) => (
+            {chatMessages.map((m) => (
               <Reveal key={m.id} className={`message ${m.role}`}>
                 <span className="message-role">
                   {m.role === "user" ? "You" : "Second Brain"}
                 </span>
-                <p>{m.content}</p>
+                <p>
+                  {m.content ||
+                    (aiBusy
+                      ? "Thinking…"
+                      : "Reply interrupted. Send again to retry.")}
+                  {aiBusy && m.id === pendingChat[1]?.id && !!m.content && (
+                    <span className="stream-cursor" aria-hidden="true" />
+                  )}
+                </p>
                 {m.proposal?.length ? (
                   <div className="proposal">
                     <strong>
@@ -438,7 +594,7 @@ export default function Workspace() {
         {aiBusy && (
           <p role="status" className="thinking">
             <LoaderCircle className="spin" size={16} />
-            Thinking through your next step…
+            {pendingChat[1]?.content ? "Replying…" : "Waiting for a reply…"}
           </p>
         )}
         <div ref={bottom} />
@@ -463,23 +619,57 @@ export default function Workspace() {
             onChange={(e) => setPrompt(e.target.value)}
             maxLength={6000}
             rows={2}
-            placeholder="A task, a thought, anything…"
+            placeholder={
+              data?.messages?.length
+                ? "A task, a thought, or type /clear…"
+                : "A task, a thought, anything…"
+            }
             aria-label="Message your second brain"
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.nativeEvent.isComposing
+              ) {
                 e.preventDefault();
                 void sendPrompt();
               }
             }}
           />
           <div>
-            <span>Shift + Enter for a new line</span>
+            <span>
+              {data?.messages?.length ? (
+                <>
+                  Type{" "}
+                  <code
+                    style={{
+                      background: "#f1f5f9",
+                      padding: "1px 4px",
+                      borderRadius: "4px",
+                      fontSize: "0.72rem",
+                      fontFamily: "monospace",
+                    }}
+                  >
+                    /clear
+                  </code>{" "}
+                  to restart fresh
+                </>
+              ) : (
+                "Shift + Enter for a new line"
+              )}
+            </span>
             <button
               className="send-button"
               aria-label="Send message"
-              disabled={!prompt.trim() || aiBusy || !data?.aiConfigured}
+              disabled={
+                !prompt.trim() || aiBusy || clearingAi || !data?.aiConfigured
+              }
             >
-              <ArrowUp size={19} />
+              {aiBusy ? (
+                <LoaderCircle size={19} className="spin" />
+              ) : (
+                <ArrowUp size={19} />
+              )}
             </button>
           </div>
         </form>
@@ -497,14 +687,18 @@ export default function Workspace() {
         Skip to tasks
       </a>
       <aside className="sidebar">
-        <a className="brand" href="/">
+        <button
+          className="brand"
+          type="button"
+          onClick={() => changeView("today")}
+        >
           <span className="brand-mark">
             <Link2 size={24} />
           </span>
           <span>
             second brain<span className="brand-period">.</span>
           </span>
-        </a>
+        </button>
         <button className="sidebar-search" onClick={() => setSearchOpen(true)}>
           <Search size={17} />
           <span>Find anything</span>
@@ -546,7 +740,13 @@ export default function Workspace() {
                   setView("all");
                 }}
               >
-                <span className="tag-dot" />
+                <span
+                  className="tag-dot"
+                  style={{
+                    background: tagColors(t, tags)["--tag-color"],
+                    borderColor: tagColors(t, tags)["--tag-color"],
+                  }}
+                />
                 {t}
                 <span>
                   {tasks.filter((x) => x.tag === t && !x.done).length}
@@ -558,14 +758,6 @@ export default function Workspace() {
           )}
         </div>
         <div className="sidebar-bottom">
-          <div className="headspace-note">
-            <span>
-              Less to hold.
-              <br />
-              More room to think.
-            </span>
-            <div className="note-line" />
-          </div>
           <button className="profile-button" onClick={() => setSettings(true)}>
             <span className="avatar">
               {data?.profile.name?.slice(0, 1).toUpperCase() || "S"}
@@ -580,15 +772,16 @@ export default function Workspace() {
       </aside>
       <div className="main-shell">
         <header className="topbar">
-          <div className="breadcrumb">
-            <span>My workspace</span>
-            <ChevronRight size={13} />
-            <strong>{nav.find((n) => n.id === view)?.label}</strong>
-          </div>
-          <span className="mobile-brand">
-            <Link2 size={22} />
-            second brain.
-          </span>
+          <h1 className="workspace-title">
+            {view === "today"
+              ? new Intl.DateTimeFormat("en-GB", {
+                  timeZone: tz,
+                  day: "numeric",
+                  month: "short",
+                  weekday: "long",
+                }).format(now)
+              : nav.find((n) => n.id === view)?.label}
+          </h1>
           <div className="topbar-actions">
             <button
               className="icon-button mobile-search"
@@ -597,7 +790,6 @@ export default function Workspace() {
             >
               <Search size={19} />
             </button>
-            <span className="private-label">Your space, at your pace</span>
             <button
               aria-label="Ask your second brain"
               aria-expanded={aiOpen}
@@ -621,51 +813,6 @@ export default function Workspace() {
         </header>
         <main id="main-content" className="main-content">
           <Reveal>
-            <div className="page-heading">
-              <div>
-                <div className="eyebrow">
-                  {view === "today"
-                    ? new Intl.DateTimeFormat("en", {
-                        timeZone: tz,
-                        weekday: "long",
-                        day: "numeric",
-                        month: "long",
-                      }).format(now)
-                    : view === "upcoming"
-                      ? "A LITTLE LOOK AHEAD"
-                      : view === "journal"
-                        ? "A PLACE TO LET IT OUT"
-                        : "EVERYTHING, IN ONE PLACE"}
-                </div>
-                <h1>
-                  {view === "today"
-                    ? "A little more headspace."
-                    : view === "upcoming"
-                      ? "Good things take a plan."
-                      : view === "journal"
-                        ? "Out of your head. Onto here."
-                        : "Your tasks. Your pace."}
-                </h1>
-                <p>
-                  {view === "today"
-                    ? pending
-                      ? `${pending} ${pending === 1 ? "thing" : "things"} for today. One small step at a time.`
-                      : "You have room to choose what matters today."
-                    : view === "upcoming"
-                      ? "Keep what’s coming in sight, and out of your head."
-                      : view === "journal"
-                        ? "Thoughts don’t need to be tidy to belong here."
-                        : "A home for the things you want to get to."}
-                </p>
-              </div>
-              <button
-                className="button primary add-desktop"
-                onClick={() => setEditing(null)}
-              >
-                <Plus size={17} />
-                Add task<kbd>N</kbd>
-              </button>
-            </div>
             {loading ? (
               <div
                 className="loading-state"
@@ -694,84 +841,6 @@ export default function Workspace() {
               </div>
             ) : (
               <>
-                {!data?.profile.onboarded && (
-                  <div className="onboarding-note">
-                    <div>
-                      <span className="mini-sparkle">
-                        <Sparkles size={17} />
-                      </span>
-                      <span>
-                        <strong>Make this space yours.</strong>
-                        <small>
-                          A little about you helps your brain make better plans.
-                        </small>
-                      </span>
-                    </div>
-                    <button onClick={() => setSettings(true)}>
-                      Set up your space <ArrowUpRight size={16} />
-                    </button>
-                  </div>
-                )}
-                {view === "today" && (
-                  <div className="today-overview">
-                    <div className="focus-card">
-                      <div className="focus-top">
-                        <span>
-                          <Sun size={16} /> TODAY, AT A GLANCE
-                        </span>
-                        <span>
-                          {completed}/{todayTasks.length} complete
-                        </span>
-                      </div>
-                      <div className="focus-main">
-                        <div>
-                          <strong>
-                            {pending === 0
-                              ? "A fresh page."
-                              : `${pending} small ${pending === 1 ? "step" : "steps"}.`}
-                          </strong>
-                          <p>
-                            {completed > 0
-                              ? "Look at you, making room. Keep it gentle."
-                              : "You don’t have to do everything. Just the next thing."}
-                          </p>
-                        </div>
-                        <div
-                          className="progress-ring"
-                          style={
-                            {
-                              "--progress": `${todayTasks.length ? (completed / todayTasks.length) * 100 : 0}%`,
-                            } as React.CSSProperties
-                          }
-                        >
-                          <span>
-                            {completed === todayTasks.length &&
-                            completed > 0 ? (
-                              <Check size={22} />
-                            ) : (
-                              <Sun size={25} strokeWidth={1.2} />
-                            )}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      className="plan-card"
-                      onClick={() =>
-                        startPrompt(
-                          "Help me choose one manageable next step from my tasks today.",
-                        )
-                      }
-                    >
-                      <Sparkles size={20} />
-                      <strong>Not sure where to start?</strong>
-                      <span>
-                        Let’s find your next small step.
-                        <ArrowUpRight size={17} />
-                      </span>
-                    </button>
-                  </div>
-                )}
                 {view === "journal" ? (
                   <div className="journal-view">
                     <form className="journal-composer" onSubmit={saveJournal}>
@@ -843,22 +912,6 @@ export default function Workspace() {
                 ) : (
                   <>
                     <section className="task-section">
-                      <div className="section-title">
-                        <h2>
-                          {view === "today"
-                            ? "Your day, made manageable"
-                            : view === "upcoming"
-                              ? "On the horizon"
-                              : tag
-                                ? `# ${tag}`
-                                : "The whole picture"}
-                        </h2>
-                        <span>
-                          {view === "today"
-                            ? `${overdue.length ? `${overdue.length} overdue · ` : ""}${pending} planned`
-                            : selected.filter((t) => !t.done).length + " to do"}
-                        </span>
-                      </div>
                       <div className="task-toolbar">
                         <FilterTabs
                           value={status}
@@ -889,6 +942,36 @@ export default function Workspace() {
                           </select>
                         </label>
                       </div>
+                      {view === "today" && (
+                        <div className="daily-progress">
+                          <div
+                            role="progressbar"
+                            aria-label="Today’s task progress"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={progress}
+                            aria-valuetext={
+                              completed +
+                              " of " +
+                              todayTasks.length +
+                              " tasks complete"
+                            }
+                            className="progress-track"
+                          >
+                            <span style={{ width: progress + "%" }} />
+                          </div>
+                          <span>{progress}%</span>
+                        </div>
+                      )}
+                      {view === "upcoming" && (
+                        <UpcomingCalendar
+                          tasks={filtered}
+                          timezone={tz}
+                          today={today}
+                          selected={calendarDate}
+                          onSelect={setCalendarDate}
+                        />
+                      )}
                       {(tag || query) && (
                         <div className="active-filter">
                           {tag || `Search: ${query}`}
@@ -911,10 +994,11 @@ export default function Workspace() {
                           status === "done" ? "Completed tasks" : "Tasks to do"
                         }
                       >
-                        {filtered.length ? (
+                        {visibleTasks.length ? (
                           groups.map(([label, list]) => (
                             <section className="task-group" key={label}>
-                              {view !== "all" && (
+                              {(view === "upcoming" ||
+                                (view === "today" && label === "Overdue")) && (
                                 <h3>
                                   {label}
                                   <span>{list.length}</span>
@@ -924,6 +1008,7 @@ export default function Workspace() {
                                 <TaskRow
                                   key={task.id}
                                   task={task}
+                                  tags={tags}
                                   timezone={tz}
                                   busy={busyIds.has(task.id)}
                                   onToggle={() => toggle(task)}
@@ -945,23 +1030,25 @@ export default function Workspace() {
                             }
                             heading={
                               query || tag
-                                ? "Nothing matches just yet."
+                                ? "No matching tasks"
                                 : status === "done"
-                                  ? "Small wins go here."
+                                  ? "No completed tasks"
                                   : view === "upcoming"
-                                    ? "Nothing around the corner."
+                                    ? calendarDate
+                                      ? "No tasks on this date"
+                                      : "No upcoming tasks"
                                     : view === "today"
-                                      ? "A little breathing room."
-                                      : "A home for your next small step."
+                                      ? "All clear for today"
+                                      : "No tasks yet"
                             }
                           >
                             {query || tag
                               ? "Try another search or clear your filter."
                               : status === "done"
-                                ? "Every finished task is a little less to carry."
+                                ? "Complete a task to see it here."
                                 : view === "upcoming"
-                                  ? "Add a future task or event, and we’ll keep it in sight."
-                                  : "Add what’s on your mind. One thing is a good start."}
+                                  ? "Add a task or choose another date."
+                                  : "Add a task to get started."}
                           </Empty>
                         )}
                       </div>
@@ -971,85 +1058,8 @@ export default function Workspace() {
                       >
                         <Plus size={18} />
                         <span>Add a task</span>
-                        <span className="quick-add-hint">
-                          Get it out of your head
-                        </span>
                       </button>
                     </section>
-                    {view === "today" && (
-                      <section className="horizon-section">
-                        <div className="section-title">
-                          <h2>Around the corner</h2>
-                          <button
-                            className="text-button"
-                            onClick={() => changeView("upcoming")}
-                          >
-                            View upcoming
-                            <ArrowUpRight size={14} />
-                          </button>
-                        </div>
-                        {(upcomingEvents.length
-                          ? upcomingEvents
-                          : future.slice(0, 2)
-                        ).length ? (
-                          <div className="event-grid">
-                            {(upcomingEvents.length
-                              ? upcomingEvents
-                              : future.slice(0, 2)
-                            ).map((t) => (
-                              <button
-                                className="event-card"
-                                onClick={() => setEditing(t)}
-                                key={t.id}
-                              >
-                                <div className="event-date">
-                                  <strong>
-                                    {new Intl.DateTimeFormat("en", {
-                                      day: "numeric",
-                                      timeZone: tz,
-                                    }).format(new Date(t.due_at!))}
-                                  </strong>
-                                  <span>
-                                    {new Intl.DateTimeFormat("en", {
-                                      month: "short",
-                                      timeZone: tz,
-                                    }).format(new Date(t.due_at!))}
-                                  </span>
-                                </div>
-                                <span>
-                                  <strong>{t.title}</strong>
-                                  <small>
-                                    {t.tag || "Upcoming"} ·{" "}
-                                    {daysAway(t.due_at!, tz)} days away
-                                  </small>
-                                </span>
-                                <ChevronRight size={16} />
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="horizon-empty">
-                            <CalendarDays size={19} />
-                            <p>
-                              No deadlines on the horizon.
-                              <span>
-                                Future you has a little breathing room.
-                              </span>
-                            </p>
-                            <button
-                              className="text-button"
-                              onClick={() => {
-                                setView("upcoming");
-                                setEditing(null);
-                              }}
-                            >
-                              Plan ahead
-                              <Plus size={15} />
-                            </button>
-                          </div>
-                        )}
-                      </section>
-                    )}
                   </>
                 )}
                 {!!data?.trackers.length && view === "today" && (
@@ -1088,10 +1098,6 @@ export default function Workspace() {
                     ))}
                   </section>
                 )}
-                <footer className="workspace-footer">
-                  <span>A little progress is still progress.</span>
-                  <span>Made for your kind of mind.</span>
-                </footer>
               </>
             )}
           </Reveal>
@@ -1440,14 +1446,23 @@ function SettingsPanel({
           Gentle reminders appear while this app is open. Your dated tasks stay
           in Today and Upcoming when you return.
         </p>
-        <a
-          className="signout-link"
-          href="/signout-with-chatgpt?return_to=/"
-          target="_top"
-        >
-          <LogOut size={15} />
-          Sign out
-        </a>
+        {typeof window !== "undefined" && window.AndroidBridge ? (
+          <p
+            className="reminder-info"
+            style={{ textAlign: "center", marginTop: "1rem" }}
+          >
+            Second Brain for Android • Offline Ready
+          </p>
+        ) : (
+          <a
+            className="signout-link"
+            href="/signout-with-chatgpt?return_to=/"
+            target="_top"
+          >
+            <LogOut size={15} />
+            Sign out
+          </a>
+        )}
       </div>
     </Modal>
   );
