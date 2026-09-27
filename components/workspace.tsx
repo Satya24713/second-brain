@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Sun,
   CalendarDays,
-  Inbox,
+  ChartNoAxesCombined,
+  MessageCircle,
   BookOpen,
   Plus,
   Search,
@@ -14,7 +15,6 @@ import {
   ArrowUpRight,
   ChevronRight,
   Check,
-  CheckCheck,
   Hash,
   LoaderCircle,
   RefreshCw,
@@ -27,33 +27,83 @@ import {
 import { Toaster, toast } from "sonner";
 import { api, streamAssistant } from "@/lib/client";
 import { dayKey, formatDue } from "@/lib/dates";
-import type { AppData, Task, Journal, Message } from "@/lib/types";
+import type { Action, AppData, Task, Journal, Message } from "@/lib/types";
 import { UpcomingCalendar } from "./product/upcoming-calendar";
-import { priorityRank, tagColors } from "@/lib/task-display";
+import { priorityRank, tagColors, taskVisibleOnView } from "@/lib/task-display";
 import { TaskEditor } from "./product/task-editor";
 import { TaskRow } from "./product/task-row";
 import { JournalEditor } from "./product/journal-editor";
 import { Reminders } from "./product/reminders";
-import {
-  Empty,
-  FilterTabs,
-  Modal,
-  Reveal,
-  MobileAssistant,
-} from "./product/primitives";
-type View = "today" | "upcoming" | "all" | "journal";
+import { TrackerPanel } from "./product/tracker-panel";
+import { MemoryManager } from "./product/memory-manager";
+import { Empty, Modal, Reveal, MobileAssistant } from "./product/primitives";
+type View = "today" | "upcoming" | "tracker" | "journal";
 const nav = [
   { id: "today" as View, label: "Today", icon: Sun },
   { id: "upcoming" as View, label: "Upcoming", icon: CalendarDays },
-  { id: "all" as View, label: "All tasks", icon: Inbox },
+  { id: "tracker" as View, label: "Tracker", icon: ChartNoAxesCombined },
   { id: "journal" as View, label: "Journal", icon: BookOpen },
 ];
+function proposalTitle(action: Action, data: AppData | null) {
+  const task = data?.tasks.find((item) => item.id === action.id);
+  const metric = data?.metrics?.find(
+    (item) => item.id === (action.metric_id || action.id),
+  );
+  const entry = data?.metricEntries?.find((item) => item.id === action.id);
+  const memory = data?.memories?.find((item) => item.id === action.id);
+  const journal = data?.journal.find((item) => item.id === action.id);
+  return (
+    action.title ||
+    task?.title ||
+    metric?.title ||
+    memory?.title ||
+    (entry &&
+      data?.metrics?.find((item) => item.id === entry.metric_id)?.title) ||
+    action.name ||
+    action.filename ||
+    action.body?.slice(0, 160) ||
+    journal?.body.slice(0, 160) ||
+    (action.type.startsWith("metric_entry")
+      ? "Tracker entry"
+      : action.type === "profile"
+        ? "Your profile"
+        : "Workspace change")
+  );
+}
+function proposalDetails(action: Action) {
+  const details: string[] = [];
+  if (action.type.endsWith("_delete"))
+    details.push(
+      "Delete this item" +
+        (action.type === "metric_delete" ? " and all its entries" : ""),
+    );
+  if (action.done !== undefined)
+    details.push(action.done ? "Mark complete" : "Reopen task");
+  if (action.value !== undefined)
+    details.push(
+      `Value: ${action.value}${action.unit ? ` ${action.unit}` : ""}`,
+    );
+  if (action.goal !== undefined)
+    details.push(
+      action.goal === null
+        ? "Remove goal"
+        : `Goal: ${action.goal} ${action.unit || ""} ${action.frequency || ""}`.trim(),
+    );
+  if (action.metric_type)
+    details.push(`Measure: ${action.metric_type.replaceAll("_", " ")}`);
+  if (action.aggregation) details.push(`Combine: ${action.aggregation}`);
+  if (action.tag !== undefined) details.push(`Tag: ${action.tag || "none"}`);
+  if (action.priority) details.push(`Priority: ${action.priority}`);
+  if (action.filename) details.push(action.filename);
+  if (action.summary) details.push(action.summary);
+  if (action.notes) details.push(action.notes);
+  return details.join(" · ");
+}
 export default function Workspace() {
   const [data, setData] = useState<AppData | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>("today");
-  const [status, setStatus] = useState("active");
   const [tag, setTag] = useState("");
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -62,6 +112,8 @@ export default function Workspace() {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiHidden, setAiHidden] = useState(false);
   const [prompt, setPrompt] = useState("");
+  const [memoryPicker, setMemoryPicker] = useState(false);
+  const [attachedMemories, setAttachedMemories] = useState<string[]>([]);
   const [aiBusy, setAiBusy] = useState(false);
   const [pendingChat, setPendingChat] = useState<Message[]>([]);
   const aiRequest = useRef(false);
@@ -143,16 +195,18 @@ export default function Workspace() {
   );
   const completed = todayTasks.filter((t) => t.done).length;
   const pending = todayTasks.filter((t) => !t.done).length;
-  const selected = tasks.filter(
-    (t) =>
-      view === "all" ||
-      (view === "today" && t.due_at && dayKey(t.due_at, tz) <= today) ||
-      (view === "upcoming" && t.due_at && dayKey(t.due_at, tz) > today),
+  const selected = tasks.filter((task) =>
+    taskVisibleOnView(
+      view,
+      task.due_at ? dayKey(task.due_at, tz) : "",
+      !!task.done,
+      today,
+      calendarDate,
+    ),
   );
   const filtered = selected
     .filter(
       (t) =>
-        (status === "all" || (status === "done" ? !!t.done : !t.done)) &&
         (!tag || t.tag === tag) &&
         (!query ||
           `${t.title} ${t.tag} ${t.notes}`
@@ -166,12 +220,7 @@ export default function Workspace() {
           ? b.created_at.localeCompare(a.created_at)
           : (a.due_at || "z").localeCompare(b.due_at || "z"),
     );
-  const visibleTasks =
-    view === "upcoming" && calendarDate
-      ? filtered.filter(
-          (task) => task.due_at && dayKey(task.due_at, tz) === calendarDate,
-        )
-      : filtered;
+  const visibleTasks = filtered;
   const progress = todayTasks.length
     ? Math.round((completed / todayTasks.length) * 100)
     : 0;
@@ -237,7 +286,6 @@ export default function Workspace() {
     setCalendarDate("");
     setTag("");
     setQuery("");
-    setStatus("active");
   }
   function startPrompt(value: string) {
     setPrompt(value);
@@ -270,15 +318,6 @@ export default function Workspace() {
     if (!trimmed || aiRequest.current || clearingAi || !data?.aiConfigured)
       return;
 
-    if (
-      trimmed.toLowerCase() === "/clear" ||
-      trimmed.toLowerCase() === "clear"
-    ) {
-      setPrompt("");
-      await clearChat();
-      return;
-    }
-
     aiRequest.current = true;
     setAiBusy(true);
     setAiError("");
@@ -301,9 +340,17 @@ export default function Workspace() {
     };
     setPendingChat([optimisticUser, optimisticReply]);
     try {
-      const result = await streamAssistant(trimmed, (content) => {
-        setPendingChat([optimisticUser, { ...optimisticReply, content }]);
-      });
+      const result = await streamAssistant(
+        trimmed,
+        (content) => {
+          setPendingChat([optimisticUser, { ...optimisticReply, content }]);
+        },
+        {
+          sent_at: sentAt,
+          timezone: tz,
+          attached_memory_ids: attachedMemories,
+        },
+      );
       setData((current) =>
         current
           ? {
@@ -322,6 +369,8 @@ export default function Workspace() {
           : current,
       );
       setPendingChat([]);
+      setAttachedMemories([]);
+      setMemoryPicker(false);
     } catch (e) {
       setAiError((e as Error).message);
       setPrompt((draft) => draft || trimmed);
@@ -334,7 +383,7 @@ export default function Workspace() {
     setBusyIds((s) => new Set(s).add(id));
     try {
       await api("assistant/apply", "POST", { messageId: id });
-      await saved("Plan added to your workspace");
+      await saved("Changes applied to your workspace");
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -399,13 +448,9 @@ export default function Workspace() {
   const assistant = (
     <>
       <div className="assistant-heading">
-        <span className="assistant-icon">
-          <Sparkles size={17} />
+        <span className="chat-heading">
+          <MessageCircle size={18} /> AI chat
         </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <strong>Your second brain</strong>
-          <span>A little help, when you need it</span>
-        </div>
         <div
           style={{
             display: "flex",
@@ -536,9 +581,6 @@ export default function Workspace() {
           <div className="messages">
             {chatMessages.map((m) => (
               <Reveal key={m.id} className={`message ${m.role}`}>
-                <span className="message-role">
-                  {m.role === "user" ? "You" : "Second Brain"}
-                </span>
                 <p>
                   {m.content ||
                     (aiBusy
@@ -548,6 +590,9 @@ export default function Workspace() {
                     <span className="stream-cursor" aria-hidden="true" />
                   )}
                 </p>
+                <time className="message-time" dateTime={m.created_at}>
+                  {formatDue(m.created_at, tz)}
+                </time>
                 {m.proposal?.length ? (
                   <div className="proposal">
                     <strong>
@@ -559,13 +604,36 @@ export default function Workspace() {
                     {m.proposal.map((a, i) => (
                       <div className="proposal-item" key={i}>
                         <span className="proposal-type">
-                          {a.kind === "event" ? "event" : a.type}
+                          {a.kind === "event"
+                            ? "event"
+                            : String(a.type || "change").replaceAll("_", " ")}
                         </span>
                         <span>
-                          {a.title ||
-                            a.body?.slice(0, 160) ||
-                            "Update your profile"}
+                          {proposalTitle(a, data)}
+                          {proposalDetails(a) && (
+                            <small>{proposalDetails(a)}</small>
+                          )}
                           {a.due_at && <small>{formatDue(a.due_at, tz)}</small>}
+                          {a.due_at === null && <small>Remove due date</small>}
+                          {a.recorded_at && (
+                            <small>
+                              {formatDue(a.recorded_at, tz)}
+                              {a.end_at ? ` → ${formatDue(a.end_at, tz)}` : ""}
+                            </small>
+                          )}
+                          {a.content && (
+                            <details>
+                              <summary>View memory content</summary>
+                              <p
+                                style={{
+                                  whiteSpace: "pre-wrap",
+                                  overflowWrap: "anywhere",
+                                }}
+                              >
+                                {a.content}
+                              </p>
+                            </details>
+                          )}
                         </span>
                       </div>
                     ))}
@@ -577,12 +645,12 @@ export default function Workspace() {
                       {m.applied ? (
                         <>
                           <Check size={15} />
-                          Added to your workspace
+                          Changes applied
                         </>
                       ) : busyIds.has(m.id) ? (
                         "Saving…"
                       ) : (
-                        "Add to my workspace"
+                        "Apply changes"
                       )}
                     </button>
                   </div>
@@ -612,6 +680,65 @@ export default function Workspace() {
             {aiError}
           </p>
         )}
+        {memoryPicker && (
+          <div className="memory-picker">
+            <strong>Attach a memory</strong>
+            {data?.memories?.length ? (
+              data.memories.map((memory) => (
+                <label key={memory.id}>
+                  <input
+                    type="checkbox"
+                    checked={attachedMemories.includes(memory.id)}
+                    onChange={(event) =>
+                      setAttachedMemories((current) =>
+                        event.target.checked
+                          ? [...current, memory.id]
+                          : current.filter((id) => id !== memory.id),
+                      )
+                    }
+                  />
+                  <span>
+                    {memory.title}
+                    <small>{memory.filename}</small>
+                  </span>
+                </label>
+              ))
+            ) : (
+              <p>Create a memory in Settings to attach it here.</p>
+            )}
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                setMemoryPicker(false);
+                setSettings(true);
+              }}
+            >
+              Manage memories
+            </button>
+          </div>
+        )}
+        {!!attachedMemories.length && (
+          <div className="attached-memories">
+            {data?.memories
+              ?.filter((memory) => attachedMemories.includes(memory.id))
+              .map((memory) => (
+                <button
+                  key={memory.id}
+                  type="button"
+                  onClick={() =>
+                    setAttachedMemories((current) =>
+                      current.filter((id) => id !== memory.id),
+                    )
+                  }
+                  aria-label={`Remove ${memory.title} attachment`}
+                >
+                  {memory.title}
+                  <X size={12} />
+                </button>
+              ))}
+          </div>
+        )}
         <form onSubmit={sendPrompt}>
           <textarea
             ref={promptRef}
@@ -619,12 +746,8 @@ export default function Workspace() {
             onChange={(e) => setPrompt(e.target.value)}
             maxLength={6000}
             rows={2}
-            placeholder={
-              data?.messages?.length
-                ? "A task, a thought, or type /clear…"
-                : "A task, a thought, anything…"
-            }
-            aria-label="Message your second brain"
+            placeholder="A task, a thought, anything…"
+            aria-label="Message AI"
             onKeyDown={(e) => {
               if (
                 e.key === "Enter" &&
@@ -637,26 +760,25 @@ export default function Workspace() {
             }}
           />
           <div>
-            <span>
-              {data?.messages?.length ? (
-                <>
-                  Type{" "}
-                  <code
-                    style={{
-                      background: "#f1f5f9",
-                      padding: "1px 4px",
-                      borderRadius: "4px",
-                      fontSize: "0.72rem",
-                      fontFamily: "monospace",
-                    }}
-                  >
-                    /clear
-                  </code>{" "}
-                  to restart fresh
-                </>
-              ) : (
-                "Shift + Enter for a new line"
-              )}
+            <button
+              type="button"
+              className="icon-button attach-memory-button"
+              aria-label="Attach memory"
+              aria-expanded={memoryPicker}
+              onClick={() => setMemoryPicker((open) => !open)}
+            >
+              <Plus size={19} />
+            </button>
+            <span
+              className="chat-time-context"
+              title={`Current date and time included with every message (${tz})`}
+            >
+              {new Intl.DateTimeFormat("en", {
+                timeZone: tz,
+                hour: "numeric",
+                minute: "2-digit",
+              }).format(now)}{" "}
+              · Time aware
             </span>
             <button
               className="send-button"
@@ -718,9 +840,9 @@ export default function Workspace() {
               {item.id === "today" && pending > 0 && (
                 <span className="nav-count">{pending}</span>
               )}
-              {item.id === "all" && (
+              {item.id === "tracker" && (
                 <span className="quiet-count">
-                  {tasks.filter((t) => !t.done).length || ""}
+                  {data?.metrics?.length || ""}
                 </span>
               )}
             </button>
@@ -737,7 +859,8 @@ export default function Workspace() {
                 className={`tag-nav-item ${tag === t ? "active" : ""}`}
                 onClick={() => {
                   setTag(t);
-                  setView("all");
+                  setCalendarDate("");
+                  setView("upcoming");
                 }}
               >
                 <span
@@ -758,6 +881,16 @@ export default function Workspace() {
           )}
         </div>
         <div className="sidebar-bottom">
+          <button
+            className="sidebar-chat"
+            onClick={() => {
+              setAiOpen(true);
+              setAiHidden(false);
+            }}
+          >
+            <MessageCircle size={19} />
+            AI chat
+          </button>
           <button className="profile-button" onClick={() => setSettings(true)}>
             <span className="avatar">
               {data?.profile.name?.slice(0, 1).toUpperCase() || "S"}
@@ -789,18 +922,6 @@ export default function Workspace() {
               onClick={() => setSearchOpen(true)}
             >
               <Search size={19} />
-            </button>
-            <button
-              aria-label="Ask your second brain"
-              aria-expanded={aiOpen}
-              className="assistant-toggle"
-              onClick={() => {
-                setAiOpen(true);
-                setAiHidden(false);
-              }}
-            >
-              <Sparkles size={16} />
-              <span>Ask your brain</span>
             </button>
             <button
               className="icon-button mobile-settings"
@@ -841,7 +962,14 @@ export default function Workspace() {
               </div>
             ) : (
               <>
-                {view === "journal" ? (
+                {view === "tracker" ? (
+                  <TrackerPanel
+                    metrics={data?.metrics || []}
+                    entries={data?.metricEntries || []}
+                    timezone={tz}
+                    onChange={load}
+                  />
+                ) : view === "journal" ? (
                   <div className="journal-view">
                     <form className="journal-composer" onSubmit={saveJournal}>
                       <textarea
@@ -913,22 +1041,14 @@ export default function Workspace() {
                   <>
                     <section className="task-section">
                       <div className="task-toolbar">
-                        <FilterTabs
-                          value={status}
-                          onChange={setStatus}
-                          items={[
-                            {
-                              id: "active",
-                              label: "To do",
-                              count: selected.filter((t) => !t.done).length,
-                            },
-                            {
-                              id: "done",
-                              label: "Completed",
-                              count: selected.filter((t) => t.done).length,
-                            },
-                          ]}
-                        />
+                        <h2 className="task-list-title">
+                          {view === "today"
+                            ? "Today’s tasks"
+                            : calendarDate
+                              ? "Tasks on this date"
+                              : "To do"}
+                          <span>{selected.length}</span>
+                        </h2>
                         <label className="sort-control">
                           <SlidersHorizontal size={14} />
                           <select
@@ -965,7 +1085,9 @@ export default function Workspace() {
                       )}
                       {view === "upcoming" && (
                         <UpcomingCalendar
-                          tasks={filtered}
+                          tasks={tasks.filter(
+                            (task) => !tag || task.tag === tag,
+                          )}
                           timezone={tz}
                           today={today}
                           selected={calendarDate}
@@ -987,13 +1109,7 @@ export default function Workspace() {
                           </button>
                         </div>
                       )}
-                      <div
-                        id="task-panel"
-                        role="tabpanel"
-                        aria-label={
-                          status === "done" ? "Completed tasks" : "Tasks to do"
-                        }
-                      >
+                      <div id="task-panel" role="region" aria-label="Tasks">
                         {visibleTasks.length ? (
                           groups.map(([label, list]) => (
                             <section className="task-group" key={label}>
@@ -1020,9 +1136,7 @@ export default function Workspace() {
                         ) : (
                           <Empty
                             icon={
-                              status === "done" ? (
-                                <CheckCheck size={24} />
-                              ) : view === "upcoming" ? (
+                              view === "upcoming" ? (
                                 <CalendarDays size={24} />
                               ) : (
                                 <Sun size={25} strokeWidth={1.4} />
@@ -1031,29 +1145,25 @@ export default function Workspace() {
                             heading={
                               query || tag
                                 ? "No matching tasks"
-                                : status === "done"
-                                  ? "No completed tasks"
-                                  : view === "upcoming"
-                                    ? calendarDate
-                                      ? "No tasks on this date"
-                                      : "No upcoming tasks"
-                                    : view === "today"
-                                      ? "All clear for today"
-                                      : "No tasks yet"
+                                : view === "upcoming"
+                                  ? calendarDate
+                                    ? "No tasks on this date"
+                                    : "No upcoming tasks"
+                                  : view === "today"
+                                    ? "All clear for today"
+                                    : "No tasks yet"
                             }
                           >
                             {query || tag
                               ? "Try another search or clear your filter."
-                              : status === "done"
-                                ? "Complete a task to see it here."
-                                : view === "upcoming"
-                                  ? "Add a task or choose another date."
-                                  : "Add a task to get started."}
+                              : view === "upcoming"
+                                ? "Add a task or choose another date."
+                                : "Add a task to get started."}
                           </Empty>
                         )}
                       </div>
                       <button
-                        className="quick-add"
+                        className="button primary task-add-button"
                         onClick={() => setEditing(null)}
                       >
                         <Plus size={18} />
@@ -1108,7 +1218,7 @@ export default function Workspace() {
           {assistant}
         </MobileAssistant>
       ) : (
-        <aside className="assistant-panel" aria-label="Your second brain">
+        <aside className="assistant-panel" aria-label="AI chat">
           {assistant}
         </aside>
       )}
@@ -1126,10 +1236,13 @@ export default function Workspace() {
         ))}
         <button
           className="mobile-add"
-          aria-label="Add task"
-          onClick={() => setEditing(null)}
+          aria-label="Open AI chat"
+          onClick={() => {
+            setAiOpen(true);
+            setAiHidden(false);
+          }}
         >
-          <Plus size={25} />
+          <MessageCircle size={25} />
         </button>
         {nav.slice(2).map((n) => (
           <button
@@ -1216,6 +1329,7 @@ export default function Workspace() {
           data={data}
           onClose={() => setSettings(false)}
           onSaved={saved}
+          onChange={load}
         />
       )}
     </div>
@@ -1225,10 +1339,12 @@ function SettingsPanel({
   data,
   onClose,
   onSaved,
+  onChange,
 }: {
   data: AppData;
   onClose: () => void;
   onSaved: (m: string) => Promise<void>;
+  onChange: () => Promise<void>;
 }) {
   const [profile, setProfile] = useState(data.profile);
   const [key, setKey] = useState("");
@@ -1291,6 +1407,7 @@ function SettingsPanel({
       wide
     >
       <div className="settings-scroll">
+        <MemoryManager memories={data.memories || []} onChange={onChange} />
         <form className="editor-form" onSubmit={saveProfile}>
           <div className="field-grid">
             <label>

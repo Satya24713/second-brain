@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { metricSchema, entrySchema, memorySchema } from "./record-schemas.ts";
 const text = (max: number) => z.string().trim().max(max);
 export const dueSchema = z
   .string()
@@ -41,6 +42,50 @@ export const profileSchema = z
   .strict();
 export const journalSchema = z.object({ body: text(12000).min(1) }).strict();
 export const actionSchema = z.discriminatedUnion("type", [
+  taskPatch.extend({ type: z.literal("task_update"), id: text(100).min(1) }),
+  z.object({ type: z.literal("task_delete"), id: text(100).min(1) }).strict(),
+  journalSchema
+    .partial()
+    .extend({
+      type: z.literal("journal_update"),
+      id: text(100).min(1),
+      summary: text(2000).optional(),
+    })
+    .strict(),
+  z
+    .object({ type: z.literal("journal_delete"), id: text(100).min(1) })
+    .strict(),
+  metricSchema
+    .omit({ type: true })
+    .extend({
+      type: z.literal("metric"),
+      metric_type: metricSchema.shape.type,
+    }),
+  metricSchema
+    .omit({ type: true })
+    .partial()
+    .extend({
+      type: z.literal("metric_update"),
+      id: text(100).min(1),
+      metric_type: metricSchema.shape.type.optional(),
+    }),
+  z.object({ type: z.literal("metric_delete"), id: text(100).min(1) }).strict(),
+  entrySchema.extend({
+    type: z.literal("metric_entry"),
+    metric_id: text(100).min(1).optional(),
+    metric_ref: z.number().int().min(0).max(11).optional(),
+  }),
+  entrySchema
+    .partial()
+    .extend({ type: z.literal("metric_entry_update"), id: text(100).min(1) }),
+  z
+    .object({ type: z.literal("metric_entry_delete"), id: text(100).min(1) })
+    .strict(),
+  memorySchema.extend({ type: z.literal("memory") }),
+  memorySchema
+    .partial()
+    .extend({ type: z.literal("memory_update"), id: text(100).min(1) }),
+  z.object({ type: z.literal("memory_delete"), id: text(100).min(1) }).strict(),
   taskSchema.extend({ type: z.literal("task") }),
   z
     .object({
@@ -67,5 +112,13 @@ export const actionSchema = z.discriminatedUnion("type", [
     .strict(),
 ]);
 export const aiResultSchema = z
-  .object({ reply: text(10000).min(1), actions: z.array(actionSchema).max(12) })
-  .strict();
+  .object({
+    reply: text(10000),
+    actions: z.array(actionSchema).max(12),
+    recall: z.array(text(100).min(1)).max(6).optional(),
+  })
+  .strict()
+  .refine(
+    (result) => !!result.reply || !!result.recall?.length,
+    "A final reply is required.",
+  );

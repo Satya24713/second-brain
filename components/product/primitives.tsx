@@ -132,7 +132,7 @@ export function MobileAssistant({
           }}
         >
           <DialogPrimitive.Title className="sr-only">
-            Your second brain
+            AI chat
           </DialogPrimitive.Title>
           {children}
         </DialogPrimitive.Content>

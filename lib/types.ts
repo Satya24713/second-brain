@@ -1,3 +1,13 @@
+import type { Metric, MetricEntry } from "./tracking";
+export type Memory = {
+  id: string;
+  filename: string;
+  title: string;
+  summary: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+};
 export type Task = {
   id: string;
   title: string;
@@ -32,7 +42,40 @@ export type Tracker = {
   done: number;
 };
 export type Action = {
-  type: "task" | "journal" | "profile" | "tracker";
+  type:
+    | "task"
+    | "journal"
+    | "profile"
+    | "tracker"
+    | "task_update"
+    | "task_delete"
+    | "journal_update"
+    | "journal_delete"
+    | "metric"
+    | "metric_update"
+    | "metric_delete"
+    | "metric_entry"
+    | "metric_entry_update"
+    | "metric_entry_delete"
+    | "memory"
+    | "memory_update"
+    | "memory_delete";
+  id?: string;
+  done?: boolean;
+  metric_type?: Metric["type"];
+  unit?: string;
+  goal?: number | null;
+  frequency?: Metric["frequency"];
+  aggregation?: Metric["aggregation"];
+  category?: string;
+  tags?: string;
+  metric_id?: string;
+  metric_ref?: number;
+  value?: number;
+  recorded_at?: string;
+  end_at?: string | null;
+  filename?: string;
+  content?: string;
   title?: string;
   notes?: string;
   tag?: string;
@@ -60,6 +103,9 @@ export type AppData = {
   journal: Journal[];
   messages: Message[];
   trackers: Tracker[];
+  metrics: Metric[];
+  metricEntries: MetricEntry[];
+  memories: Memory[];
   aiConfigured: boolean;
   keyStorageReady: boolean;
 };

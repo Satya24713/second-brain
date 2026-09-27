@@ -1,4 +1,11 @@
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  real,
+  index,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -79,3 +86,64 @@ export const aiUsage = sqliteTable("ai_usage", {
   window: integer("window").notNull(),
   count: integer("count").notNull(),
 });
+export const metrics = sqliteTable(
+  "metrics",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    title: text("title").notNull(),
+    type: text("type").notNull(),
+    unit: text("unit").notNull().default(""),
+    goal: real("goal"),
+    frequency: text("frequency").notNull().default("daily"),
+    aggregation: text("aggregation").notNull().default("sum"),
+    category: text("category").notNull().default(""),
+    tags: text("tags").notNull().default(""),
+    notes: text("notes").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [index("idx_metrics_user").on(t.userId)],
+);
+export const metricEntries = sqliteTable(
+  "metric_entries",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    metricId: text("metric_id")
+      .notNull()
+      .references(() => metrics.id),
+    value: real("value").notNull(),
+    recordedAt: text("recorded_at").notNull(),
+    endAt: text("end_at"),
+    notes: text("notes").notNull().default(""),
+    tags: text("tags").notNull().default(""),
+  },
+  (t) => [
+    index("idx_metric_entries_user_time").on(
+      t.userId,
+      t.metricId,
+      t.recordedAt,
+    ),
+  ],
+);
+export const memories = sqliteTable(
+  "memories",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    filename: text("filename").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary").notNull().default(""),
+    content: text("content").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("idx_memories_user_filename").on(t.userId, t.filename)],
+);

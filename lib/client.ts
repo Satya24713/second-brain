@@ -17,6 +17,7 @@ const bridgeRequests = new Map<string, (event: BridgeEvent) => void>();
 declare global {
   interface Window {
     AndroidBridge?: {
+      exportMemoryFile?: (filename: string, content: string) => void;
       handleApiAsync?: (
         id: string,
         path: string,
@@ -79,7 +80,18 @@ function nativeRequest<T>(
 export async function streamAssistant(
   message: string,
   onText: (text: string) => void,
+  context: {
+    sent_at?: string;
+    timezone?: string;
+    attached_memory_ids?: string[];
+  } = {},
 ): Promise<AssistantResult> {
+  const payload = {
+    message,
+    sent_at: new Date().toISOString(),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    ...context,
+  };
   let raw = "";
   const onChunk = (chunk: string) => {
     raw += chunk;
@@ -90,7 +102,7 @@ export async function streamAssistant(
     return nativeRequest<AssistantResult>(
       "assistant",
       "POST",
-      { message },
+      payload,
       onChunk,
     );
   if (window.AndroidBridge)
@@ -101,7 +113,7 @@ export async function streamAssistant(
       "Content-Type": "application/json",
       Accept: "text/event-stream",
     },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(payload),
     signal: AbortSignal.timeout(180000),
   });
   if (!response.ok) {

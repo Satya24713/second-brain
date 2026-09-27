@@ -5,6 +5,22 @@ export const priorityRank = (priority: Task["priority"]) =>
 export const priorityLabel = (priority: Task["priority"]) =>
   ({ high: "Urgent", normal: "Medium", low: "Low" })[priority];
 
+export function taskVisibleOnView(
+  view: string,
+  dueDay: string,
+  done: boolean,
+  today: string,
+  selectedDay = "",
+) {
+  if (view === "today")
+    return dueDay === today || (!!dueDay && dueDay < today && !done);
+  if (view === "upcoming")
+    return selectedDay
+      ? dueDay === selectedDay
+      : !done && (!dueDay || dueDay >= today);
+  return false;
+}
+
 // The same tag keeps its color across views, reloads and devices.
 function tagHue(tag: string) {
   let hash = 0;

@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS metrics (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL, type TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '', goal REAL, frequency TEXT NOT NULL DEFAULT 'daily', aggregation TEXT NOT NULL DEFAULT 'sum', category TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_metrics_user ON metrics(user_id);
+CREATE TABLE IF NOT EXISTS metric_entries (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), metric_id TEXT NOT NULL REFERENCES metrics(id), value REAL NOT NULL, recorded_at TEXT NOT NULL, end_at TEXT, notes TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS idx_metric_entries_user_time ON metric_entries(user_id,metric_id,recorded_at);
+CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), filename TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_user_filename ON memories(user_id,filename);

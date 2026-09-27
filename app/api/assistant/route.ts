@@ -11,15 +11,21 @@ import { plan } from "@/lib/gemini";
 export async function POST(request: Request) {
   return endpoint(async () => {
     const user = await identity(request);
-    const { message } = z
-      .object({ message: z.string().trim().min(1).max(6000) })
+    const input = z
+      .object({
+        message: z.string().trim().min(1).max(6000),
+        sent_at: z.string().datetime({ offset: true }).optional(),
+        timezone: z.string().max(100).optional(),
+        attached_memory_ids: z.array(z.string().max(100)).max(6).optional(),
+      })
       .strict()
       .parse(await body(request));
+    const { message } = input;
     const run = async (
       onChunk?: (text: string) => void,
       signal?: AbortSignal,
     ) => {
-      const result = await plan(user, message, onChunk, signal);
+      const result = await plan(user, message, onChunk, signal, input);
       const now = new Date().toISOString();
       const id = crypto.randomUUID();
       const userId = crypto.randomUUID();
@@ -28,7 +34,7 @@ export async function POST(request: Request) {
           .prepare(
             "INSERT INTO messages (id,user_id,role,content,created_at) VALUES (?,?,?,?,?)",
           )
-          .bind(userId, user, "user", message, now),
+          .bind(userId, user, "user", message, input.sent_at || now),
         database()
           .prepare(
             "INSERT INTO messages (id,user_id,role,content,proposal,created_at) VALUES (?,?,?,?,?,?)",

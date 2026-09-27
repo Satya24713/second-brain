@@ -53,6 +53,9 @@ const data = {
   journal: [],
   messages: [],
   trackers: [],
+  metrics: [{ id: "water", title: "Water", type: "quantity", unit: "ml", goal: 2000, frequency: "daily", aggregation: "sum", category: "Health", tags: "daily", notes: "", created_at: now.toISOString(), updated_at: now.toISOString() }],
+  metricEntries: [{ id: "water-one", metric_id: "water", value: 500, recorded_at: now.toISOString(), end_at: null, notes: "Morning glass", tags: "" }],
+  memories: [{ id: "memory-one", filename: "memory.md", title: "Study preferences", summary: "How I like to study", content: "# Study preferences\nI prefer 25-minute study sessions.", created_at: now.toISOString(), updated_at: now.toISOString() }],
   aiConfigured: true,
   keyStorageReady: true,
 };
@@ -76,6 +79,20 @@ http
       for await (const chunk of req) body += chunk;
       const payload = body ? JSON.parse(body) : {};
       if (url.pathname === "/api/workspace") return send(data);
+      const [, , collection, recordId] = url.pathname.split("/");
+      const key = { metrics: "metrics", "metric-entries": "metricEntries", memories: "memories" }[collection];
+      if (key) {
+        if (req.method === "POST") {
+          const id = crypto.randomUUID();
+          data[key].push({ ...payload, id, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+          return send({ id, ok: true });
+        }
+        const record = data[key].find(item => item.id === recordId);
+        if (!record) { res.statusCode = 404; return send({ error: "Not found" }); }
+        if (req.method === "PATCH") Object.assign(record, payload);
+        if (req.method === "DELETE") { data[key] = data[key].filter(item => item.id !== recordId); if (key === "metrics") data.metricEntries = data.metricEntries.filter(item => item.metric_id !== recordId); }
+        return send(req.method === "GET" ? record : { ok: true });
+      }
       if (url.pathname.startsWith("/api/tasks/") && req.method === "PATCH") {
         Object.assign(
           data.tasks.find((t) => t.id === url.pathname.split("/").at(-1)),

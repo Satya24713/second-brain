@@ -30,7 +30,10 @@ export async function identity(request?: Request) {
     }
   }
   const user = await getChatGPTUser();
-  if (!user) throw new ApiError(401, "Please sign in to open your workspace.");
+  if (!user) {
+    if (request?.body) await readLimited(request).catch(() => undefined);
+    throw new ApiError(401, "Please sign in to open your workspace.");
+  }
   await database()
     .prepare(
       "INSERT INTO users (id,name,created_at) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING",

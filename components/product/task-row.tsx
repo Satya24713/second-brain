@@ -3,7 +3,7 @@ import { Check, CalendarDays, ChevronRight } from "lucide-react";
 import type { CSSProperties } from "react";
 import { tagColors, priorityLabel } from "@/lib/task-display";
 import type { Task } from "@/lib/types";
-import { formatDue, dayKey } from "@/lib/dates";
+import { relativeTaskDate, dayKey } from "@/lib/dates";
 export function TaskRow({
   task,
   tags,
@@ -46,15 +46,19 @@ export function TaskRow({
           {task.kind === "event" && <CalendarDays size={16} />}
           <span>{task.title}</span>
         </span>
-        {(task.tag || task.due_at || task.notes) && (
+        {(task.tag || task.due_at || task.completed_at || task.notes) && (
           <span className="task-meta">
             {task.tag && <span className="tag"># {task.tag}</span>}
-            {task.due_at && (
+            {(task.done && task.completed_at) || task.due_at ? (
               <span className={overdue ? "overdue" : ""}>
                 {overdue ? "Overdue · " : ""}
-                {formatDue(task.due_at, timezone)}
+                {relativeTaskDate(
+                  (task.done && task.completed_at) || task.due_at!,
+                  timezone,
+                  !!task.done,
+                )}
               </span>
-            )}
+            ) : null}
             {task.notes && !task.due_at && (
               <span className="note-preview">{task.notes}</span>
             )}

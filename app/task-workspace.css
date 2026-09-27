@@ -298,6 +298,146 @@
 .workspace-footer {
   display: none;
 }
+.task-list-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font: 600 0.9375rem/1.4 var(--font-sans);
+}
+.task-list-title > span {
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 0.75rem;
+  padding: 2px 7px;
+}
+.task-add-button {
+  margin-top: 18px;
+  width: 100%;
+  min-height: 44px;
+}
+.sidebar-chat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  width: 100%;
+  color: var(--primary);
+  border-radius: 10px;
+  background: var(--blue-soft);
+  font-size: 0.875rem;
+}
+.chat-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.messages {
+  gap: 18px;
+}
+.message {
+  max-width: 92%;
+  min-width: 0;
+}
+.message.user {
+  align-self: flex-end;
+  margin-left: 18px;
+}
+.message.assistant {
+  align-self: flex-start;
+  margin-right: 18px;
+  padding: 11px 13px;
+  border: 1px solid #e9edf3;
+  border-radius: 14px 14px 14px 4px;
+  background: #fff;
+}
+.message > p {
+  margin-top: 0;
+}
+.message-time {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.65rem;
+  color: #64748b;
+}
+.message.user .message-time {
+  text-align: right;
+}
+.assistant-compose form > div {
+  gap: 8px;
+}
+.assistant-compose .attach-memory-button {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  color: #475569;
+}
+.assistant-compose form > div > .chat-time-context {
+  flex: 1;
+  font-size: 0.65rem;
+  color: #64748b;
+}
+.memory-picker {
+  padding: 12px;
+  margin-bottom: 10px;
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+  font-size: 0.8125rem;
+}
+.memory-picker > strong {
+  display: block;
+  margin-bottom: 8px;
+}
+.memory-picker label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 0;
+}
+.memory-picker input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+.memory-picker small {
+  display: block;
+  color: #64748b;
+  font-size: 0.6875rem;
+  margin-top: 3px;
+}
+.memory-picker p {
+  color: #64748b;
+  margin-bottom: 8px;
+}
+.attached-memories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+.attached-memories button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  color: var(--primary);
+  background: var(--blue-soft);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 0.6875rem;
+}
 @media (max-width: 760px) {
   .main-content {
     padding: 10px 20px 108px;

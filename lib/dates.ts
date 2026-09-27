@@ -26,3 +26,31 @@ export function daysAway(value: string, timeZone: string) {
   const b = dayKey(new Date(), timeZone);
   return Math.round((Date.parse(a) - Date.parse(b)) / 86400000);
 }
+
+export function relativeTaskDate(
+  value: string,
+  timeZone: string,
+  completed = false,
+  now: Date = new Date(),
+) {
+  const distance = Math.round(
+    (Date.parse(dayKey(value, timeZone)) - Date.parse(dayKey(now, timeZone))) /
+      86400000,
+  );
+  const day =
+    distance === 0
+      ? "Today"
+      : distance === 1
+        ? "Tomorrow"
+        : distance === -1
+          ? "Yesterday"
+          : distance > 0
+            ? `In ${distance} days`
+            : `${Math.abs(distance)} days ago`;
+  const time = new Intl.DateTimeFormat("en", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+  return `${completed ? `Completed ${day.toLowerCase()}` : day} · ${time}`;
+}
